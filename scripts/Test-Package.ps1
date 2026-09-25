@@ -25,8 +25,11 @@ foreach ($file in $requiredFiles) {
 if ($info.info.id -ne 'deckclipboard') {
 	throw 'Unexpected app id in info.xml'
 }
-if ($info.info.dependencies.nextcloud.'min-version' -ne '34' -or $info.info.dependencies.nextcloud.'max-version' -ne '34') {
-	throw 'The package must remain version-locked to Nextcloud 34 until a later release is tested.'
+if ($info.info.version -ne '0.1.1') {
+	throw 'Unexpected app version in info.xml'
+}
+if ($info.info.dependencies.nextcloud.'min-version' -ne '34' -or $info.info.dependencies.nextcloud.'max-version' -ne '35') {
+	throw 'The package must remain version-locked to tested Nextcloud versions 34 through 35.'
 }
 
 if ($NextcloudSchema -and (Test-Path -LiteralPath $NextcloudSchema -PathType Leaf)) {

@@ -9,13 +9,13 @@
 	<name>Deck Clipboard Images</name>
 	<summary>Paste clipboard images into open Deck cards</summary>
 	<description><![CDATA[Adds Ctrl+V image upload to an open Nextcloud Deck card. Clipboard images are stored as ordinary Deck file attachments using the signed-in user's existing permissions.]]></description>
-	<version>0.1.0</version>
-	<licence>agpl</licence>
+	<version>0.1.1</version>
+	<licence>AGPL-3.0-or-later</licence>
 	<author>Hjort Creations AB</author>
 	<namespace>DeckClipboard</namespace>
 	<category>integration</category>
 	<bugs>https://github.com/HjortCreations/nextcloud-deck-clipboard/issues</bugs>
 	<dependencies>
-		<nextcloud min-version="34" max-version="34"/>
+		<nextcloud min-version="34" max-version="35"/>
 	</dependencies>
 </info>

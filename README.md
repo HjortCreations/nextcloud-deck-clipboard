@@ -15,16 +15,16 @@ This is a small standalone Nextcloud app. It does not patch or replace Deck core
 
 ## Compatibility
 
-Version `0.1.0` is intentionally limited to Nextcloud 34 until later releases have been tested.
+Version `0.1.1` is limited to the tested Nextcloud versions 34 and 35.
 
 | Component | Tested version |
 |---|---:|
-| Nextcloud | 34.0.4 |
-| Deck | 1.18.4 |
+| Nextcloud | 34.0.4, 35.0.0 |
+| Deck | 1.18.4, 1.19.0 |
 
 ## Installation
 
-1. Download `deckclipboard-0.1.0.zip` from the [v0.1.0 release](https://github.com/HjortCreations/nextcloud-deck-clipboard/releases/tag/v0.1.0).
+1. Download `deckclipboard-0.1.1.zip` from the [v0.1.1 release](https://github.com/HjortCreations/nextcloud-deck-clipboard/releases/tag/v0.1.1), or build it from source.
 2. Extract it in your Nextcloud `custom_apps` directory. The final directory must be named `deckclipboard`.
 3. Enable the app:
 
@@ -46,7 +46,7 @@ If a text editor is active, the app uploads the image but offers a manual reload
 
 - Images are stored as attachments, not inserted inline into the card description or a comment.
 - Browser clipboard support varies. The app requires the browser to expose the copied image as a clipboard file.
-- Version `0.1.0` has only been verified on the versions listed above.
+- Version `0.1.1` has only been verified on the versions listed above.
 - User-interface messages are currently in English only.
 
 ## Validation and packaging
