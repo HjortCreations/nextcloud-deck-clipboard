@@ -138,8 +138,8 @@
 		if (!target || !(target instanceof Element)) {
 			return false
 		}
-		return target.matches('input, textarea, [contenteditable="true"], [contenteditable=""]')
-			|| Boolean(target.closest('[contenteditable="true"], [contenteditable=""]'))
+		// isContentEditable also covers contenteditable="plaintext-only", which Deck's comment field uses.
+		return target.matches('input, textarea') || target.isContentEditable === true
 	}
 
 	async function responseError(response) {
