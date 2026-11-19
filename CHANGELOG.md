@@ -7,7 +7,10 @@ All notable changes to this project are documented in this file.
 ### Added
 
 - An image pasted into the card description or the comment field is inserted at the cursor after the upload.
-- The attachment list is refreshed without a page reload after the image is inserted.
+
+### Changed
+
+- The page is no longer reloaded after an upload. The attachment list, the attachment count and the card cover are refreshed through Deck's store. A reload remains as a fallback, logged to the browser console, when the store cannot be reached.
 
 ### Fixed
 

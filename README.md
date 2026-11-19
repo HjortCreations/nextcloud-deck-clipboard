@@ -7,11 +7,11 @@ This is a small standalone Nextcloud app. It does not patch or replace Deck core
 ## Features
 
 - Paste one or several clipboard images with `Ctrl+V` or `Cmd+V` while a Deck card is open.
-- Inserts the image at the cursor when it is pasted into the card description or the comment field, without reloading the page.
+- Inserts the image at the cursor when it is pasted into the card description or the comment field.
+- Updates the attachment list, the attachment count and the card cover without reloading the page.
 - Leaves normal text pasting unchanged when the clipboard contains no image.
 - Uses the signed-in user's existing Nextcloud session, CSRF token, and Deck permissions.
 - Gives each upload a unique millisecond-based filename.
-- Avoids reloading the card automatically while a text field is being edited.
 - Adds no database tables and sends no data to external services.
 
 ## Compatibility
@@ -33,7 +33,7 @@ Version `0.1.1` is limited to the tested Nextcloud versions 34 and 35.
    sudo -u www-data php occ app:enable deckclipboard
    ```
 
-4. Open a Deck card, copy an image, and paste it. The new attachment becomes visible after the card reloads.
+4. Open a Deck card, copy an image, and paste it. The new attachment appears in the attachment list of the card.
 
 The exact `occ` command and filesystem path vary between Docker, appliance, and package-based installations. Use the equivalent command for your deployment.
 
@@ -46,15 +46,17 @@ When the image is pasted into the card description or the comment field, the app
 - The description editor (Nextcloud Text) receives a synthetic paste event carrying an HTML image link. It becomes a linked image in the description, and the editor saves it together with the text typed so far.
 - The comment field receives the Markdown image syntax as typed text. Deck renders it as an image once the comment is posted.
 
-The page is not reloaded in this case. The attachment list is refreshed in place through Deck's own store.
+In any other text field, or if the editor lost focus during the upload, the image is uploaded as an attachment only.
 
-In any other text field, or if the editor lost focus during the upload, the app uploads the image but offers a manual reload button so unsaved text is not discarded. Outside text fields it reloads the card automatically after a successful upload.
+After every upload the app runs the `fetchAttachments` action of Deck's own store. Deck then loads the attachments of the card again and updates the attachment list, the attachment count and the cover image on the board, so the page is not reloaded.
+
+If the Deck store cannot be reached, the app logs a warning to the browser console and falls back to a reload: automatically when no text field is being edited, otherwise through a manual reload button so unsaved text is not discarded.
 
 ## Limitations
 
 - Inserted images use an absolute URL of the attachment preview, because the Text editor resolves a relative image source as a file path. The links stop working if the address of the Nextcloud instance changes.
 - On Nextcloud 34 (tested with Text 8.0.1) the Text editor does not display images in the Deck description and shows a loading placeholder instead. The same happens with images added through Deck's own "Add attachment" action. The image link is still saved and the attachment is listed. On Nextcloud 35 the image is displayed.
-- Deck has no public API for refreshing the attachment list, so the app calls Deck's internal store. If a Deck update changes that store, the list updates on the next page load instead.
+- Deck has no public API for refreshing attachments, so the app reaches Deck's store through Vue internals (Vuex in Deck 1.18, Pinia in Deck 1.19). If a Deck update changes that, the app falls back to reloading the page.
 - Browser clipboard support varies. The app requires the browser to expose the copied image as a clipboard file.
 - Version `0.1.1` has only been verified on the versions listed above.
 - User-interface messages are currently in English only.
@@ -68,7 +70,7 @@ On Windows with Node.js and PowerShell available:
 .\scripts\Build-Package.ps1
 ```
 
-`Test-Package.ps1` checks the manifest, required files, JavaScript syntax, route handling, image selection, filename generation, upload URL, preview URL, editor insertion, request token, and form data. If you have a local Nextcloud `app-info.xsd`, pass it explicitly with `-NextcloudSchema`.
+`Test-Package.ps1` checks the manifest, required files, JavaScript syntax, route handling, image selection, filename generation, upload URL, preview URL, editor insertion, attachment refresh, request token, and form data. If you have a local Nextcloud `app-info.xsd`, pass it explicitly with `-NextcloudSchema`.
 
 ## Upstream context
 
