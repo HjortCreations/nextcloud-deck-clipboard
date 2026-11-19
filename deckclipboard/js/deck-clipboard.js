@@ -97,6 +97,55 @@
 		return `${rootPath}/ocs/v2.php/apps/deck/api/v1.0/cards/${context.cardId}/attachment?boardId=${context.boardId}&format=json`
 	}
 
+	// Absolute, because the Text editor treats a relative image source as a file path in the user's storage.
+	function buildPreviewUrl(attachment) {
+		const base = `${root.location.origin}${getNextcloudRoot().replace(/\/$/, '')}/index.php`
+		const fileId = attachment.extendedData && attachment.extendedData.fileid
+		return fileId
+			? `${base}/core/preview?fileId=${encodeURIComponent(fileId)}&x=600&y=600&a=true`
+			: `${base}/apps/deck/cards/${encodeURIComponent(attachment.cardId)}/attachment/${encodeURIComponent(attachment.id)}`
+	}
+
+	// The names come from buildFilename() and the URLs from buildPreviewUrl(), so only "&" needs escaping.
+	function buildEditorContent(images) {
+		return {
+			html: images.map(({ name, url }) => {
+				const escaped = url.replace(/&/g, '&amp;')
+				return `<a href="${escaped}"><img src="${escaped}" alt="${name}"></a>`
+			}).join(''),
+			text: images.map(({ name, url }) => `![${name}](${url})`).join('\n'),
+		}
+	}
+
+	/**
+	 * Hands the uploaded images to the focused editor as a synthetic paste: the description
+	 * editor reads the HTML, the Markdown fallback editor reads the text. The comment field
+	 * has no paste handler of its own, so it gets the Markdown typed in at the cursor.
+	 * Returns false when the editor lost focus during the upload or did not take the content.
+	 */
+	function insertIntoEditor(editor, images) {
+		if (!editor || images.length === 0 || document.activeElement !== editor) {
+			return false
+		}
+
+		try {
+			const content = buildEditorContent(images)
+			const clipboardData = new root.DataTransfer()
+			clipboardData.setData('text/html', content.html)
+			clipboardData.setData('text/plain', content.text)
+			const pasteHandled = !editor.dispatchEvent(new root.ClipboardEvent('paste', {
+				clipboardData,
+				bubbles: true,
+				cancelable: true,
+			}))
+			return pasteHandled
+				|| (editor.isContentEditable === true && document.execCommand('insertText', false, content.text))
+		} catch (error) {
+			// The browser cannot construct a DataTransfer or a ClipboardEvent.
+			return false
+		}
+	}
+
 	function showStatus(message, kind = 'info', offerReload = false) {
 		if (statusTimer !== null) {
 			root.clearTimeout(statusTimer)
@@ -210,16 +259,25 @@
 			return
 		}
 
+		const editor = isTextEditingTarget(event.target) ? document.activeElement : null
 		uploadInProgress = true
 		showStatus(images.length === 1 ? 'Uploading image …' : `Uploading ${images.length} images …`)
 		try {
 			const now = new Date()
+			const uploaded = []
 			for (let index = 0; index < images.length; index += 1) {
-				await uploadImage(images[index], buildFilename(images[index], index, now), context)
+				const name = buildFilename(images[index], index, now)
+				const attachment = await uploadImage(images[index], name, context)
+				if (attachment) {
+					uploaded.push({ name, url: buildPreviewUrl(attachment) })
+				}
 			}
 
-			const textWasBeingEdited = isTextEditingTarget(event.target)
-			if (textWasBeingEdited) {
+			if (uploaded.length === images.length && insertIntoEditor(editor, uploaded)) {
+				showStatus(images.length === 1
+					? 'Image uploaded and inserted.'
+					: `${images.length} images uploaded and inserted.`)
+			} else if (editor) {
 				showStatus(
 					images.length === 1
 						? 'Image uploaded. Reload after saving your text changes.'
@@ -239,10 +297,13 @@
 	}
 
 	const exported = {
+		buildEditorContent,
 		buildFilename,
+		buildPreviewUrl,
 		buildUploadUrl,
 		extensionFor,
 		getClipboardImages,
+		insertIntoEditor,
 		parseDeckCardContext,
 		uploadImage,
 	}
