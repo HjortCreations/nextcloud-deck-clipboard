@@ -46,7 +46,7 @@ When the image is pasted into the card description or the comment field, the app
 - The description editor (Nextcloud Text) receives a synthetic paste event carrying an HTML image link. It becomes a linked image in the description, and the editor saves it together with the text typed so far.
 - The comment field receives the Markdown image syntax as typed text. Deck renders it as an image once the comment is posted.
 
-In any other text field, or if the editor lost focus during the upload, the image is uploaded as an attachment only.
+The content goes to the place where the cursor is when the upload finishes. In any other text field, or if the editor lost focus, the card was closed or text was selected during the upload, the image is uploaded as an attachment only. A file that Nextcloud cannot generate a preview for, such as an SVG with the default settings, is inserted as a link to the file instead of an image.
 
 After every upload the app runs the `fetchAttachments` action of Deck's own store. Deck then loads the attachments of the card again and updates the attachment list, the attachment count and the cover image on the board, so the page is not reloaded.
 
