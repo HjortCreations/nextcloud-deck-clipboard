@@ -328,12 +328,13 @@
 				failure = error
 			}
 
-			// The user may have moved to another card while the upload ran.
+			// The user may have closed the card or left the board while the upload ran.
 			const open = parseDeckCardContext(root.location.pathname)
 			const cardStillOpen = Boolean(open) && open.cardId === context.cardId
+			const boardStillOpen = new RegExp(`/apps/deck/board/${context.boardId}(?:/|$)`).test(root.location.pathname)
 			const inserted = !failure && cardStillOpen && entries.length === images.length
 				&& insertIntoEditor(editor, entries, hadSelection)
-			const refreshed = stored === 0 || !cardStillOpen || await refreshAttachments(context.cardId)
+			const refreshed = stored === 0 || !boardStillOpen || await refreshAttachments(context.cardId)
 
 			let message = (images.length === 1 ? 'Image' : `${images.length} images`)
 				+ (inserted ? ' uploaded and inserted.' : ' uploaded.')
