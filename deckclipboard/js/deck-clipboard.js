@@ -146,6 +146,23 @@
 		}
 	}
 
+	/**
+	 * Reloads the attachment list of the open card. Deck has no public API for this, so its
+	 * store is reached through Vue internals: Pinia on Deck 1.19, Vuex on Deck 1.18.
+	 */
+	async function refreshAttachmentList(cardId) {
+		try {
+			const content = document.getElementById('content')
+			if (content && content.__vue_app__) {
+				await content.__vue_app__.config.globalProperties.$pinia._s.get('attachment').fetchAttachments(cardId)
+			} else {
+				await document.querySelector('[data-test="description"]').__vue__.$store.dispatch('fetchAttachments', cardId)
+			}
+		} catch (error) {
+			// Unknown Deck internals: the list catches up on the next page load.
+		}
+	}
+
 	function showStatus(message, kind = 'info', offerReload = false) {
 		if (statusTimer !== null) {
 			root.clearTimeout(statusTimer)
@@ -274,6 +291,7 @@
 			}
 
 			if (uploaded.length === images.length && insertIntoEditor(editor, uploaded)) {
+				refreshAttachmentList(context.cardId)
 				showStatus(images.length === 1
 					? 'Image uploaded and inserted.'
 					: `${images.length} images uploaded and inserted.`)
