@@ -147,19 +147,27 @@
 	}
 
 	/**
-	 * Reloads the attachment list of the open card. Deck has no public API for this, so its
-	 * store is reached through Vue internals: Pinia on Deck 1.19, Vuex on Deck 1.18.
+	 * Runs Deck's own fetchAttachments action, which reloads the attachment list of the card
+	 * and its attachment count and cover on the board. Deck has no public API for this, so
+	 * the store is reached through Vue internals: Pinia on Deck 1.19, Vuex on Deck 1.18.
+	 * Returns false when the store is not there or the request fails.
 	 */
-	async function refreshAttachmentList(cardId) {
+	async function refreshAttachments(cardId) {
 		try {
-			const content = document.getElementById('content')
-			if (content && content.__vue_app__) {
-				await content.__vue_app__.config.globalProperties.$pinia._s.get('attachment').fetchAttachments(cardId)
-			} else {
-				await document.querySelector('[data-test="description"]').__vue__.$store.dispatch('fetchAttachments', cardId)
+			const vue3Root = document.getElementById('content')
+			const vue2Root = document.getElementById('content-vue')
+			const fetching = vue3Root && vue3Root.__vue_app__
+				? vue3Root.__vue_app__.config.globalProperties.$pinia._s.get('attachment').fetchAttachments(cardId)
+				: vue2Root.__vue__.$store.dispatch('fetchAttachments', cardId)
+			// Vuex returns undefined instead of throwing when the action does not exist.
+			if (!fetching || typeof fetching.then !== 'function') {
+				throw new Error('Deck store has no fetchAttachments action')
 			}
+			await fetching
+			return true
 		} catch (error) {
-			// Unknown Deck internals: the list catches up on the next page load.
+			console.warn('deckclipboard: could not refresh the attachments through the Deck store, falling back to a page reload.', error)
+			return false
 		}
 	}
 
@@ -290,21 +298,16 @@
 				}
 			}
 
-			if (uploaded.length === images.length && insertIntoEditor(editor, uploaded)) {
-				refreshAttachmentList(context.cardId)
-				showStatus(images.length === 1
-					? 'Image uploaded and inserted.'
-					: `${images.length} images uploaded and inserted.`)
+			const inserted = uploaded.length === images.length && insertIntoEditor(editor, uploaded)
+			const refreshed = await refreshAttachments(context.cardId)
+			const done = (images.length === 1 ? 'Image' : `${images.length} images`)
+				+ (inserted ? ' uploaded and inserted.' : ' uploaded.')
+			if (refreshed) {
+				showStatus(done)
 			} else if (editor) {
-				showStatus(
-					images.length === 1
-						? 'Image uploaded. Reload after saving your text changes.'
-						: `${images.length} images uploaded. Reload after saving your text changes.`,
-					'success',
-					true,
-				)
+				showStatus(`${done} Reload after saving your text changes.`, 'success', true)
 			} else {
-				showStatus(images.length === 1 ? 'Image uploaded.' : `${images.length} images uploaded.`)
+				showStatus(done)
 				root.setTimeout(() => root.location.reload(), 700)
 			}
 		} catch (error) {
@@ -323,6 +326,7 @@
 		getClipboardImages,
 		insertIntoEditor,
 		parseDeckCardContext,
+		refreshAttachments,
 		uploadImage,
 	}
 

@@ -151,7 +151,50 @@ globalThis.fetch = async (url, options) => {
 	}
 }
 
-app.uploadImage(new Blob(['image'], { type: 'image/png' }), 'clipboard-test.png', { boardId: 3, cardId: 389 })
+async function refreshAttachmentsReachesBothDeckStores() {
+	const calls = []
+	const warnings = []
+	const elements = {}
+	const originalWarn = console.warn
+	console.warn = (...args) => warnings.push(args)
+	document.getElementById = (id) => elements[id] || null
+
+	elements.content = {
+		__vue_app__: {
+			config: {
+				globalProperties: {
+					$pinia: {
+						_s: new Map([['attachment', {
+							fetchAttachments: async (cardId) => calls.push(['pinia', cardId]),
+						}]]),
+					},
+				},
+			},
+		},
+	}
+	assert.equal(await app.refreshAttachments(389), true)
+
+	delete elements.content
+	const vuex = { dispatch: async (action, cardId) => calls.push([action, cardId]) }
+	elements['content-vue'] = { __vue__: { $store: vuex } }
+	assert.equal(await app.refreshAttachments(389), true)
+	assert.deepEqual(calls, [['pinia', 389], ['fetchAttachments', 389]])
+	assert.equal(warnings.length, 0)
+
+	vuex.dispatch = () => undefined
+	assert.equal(await app.refreshAttachments(389), false)
+	vuex.dispatch = async () => {
+		throw new Error('offline')
+	}
+	assert.equal(await app.refreshAttachments(389), false)
+	delete elements['content-vue']
+	assert.equal(await app.refreshAttachments(389), false)
+	assert.equal(warnings.length, 3)
+	console.warn = originalWarn
+}
+
+refreshAttachmentsReachesBothDeckStores()
+	.then(() => app.uploadImage(new Blob(['image'], { type: 'image/png' }), 'clipboard-test.png', { boardId: 3, cardId: 389 }))
 	.then((result) => {
 		assert.deepEqual(result, { id: 7 })
 		assert.equal(capturedRequest.options.method, 'POST')
