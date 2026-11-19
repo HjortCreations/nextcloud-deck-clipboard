@@ -128,9 +128,41 @@
 	}
 
 	/**
-	 * Hands the uploaded images to the focused editor as a synthetic paste: the description
-	 * editor reads the HTML, the Markdown fallback editor reads the text. The comment field
-	 * has no paste handler of its own, so it gets the Markdown typed in at the cursor.
+	 * Remembers where the paste happened in the description editor and follows that place
+	 * through later edits, so the image lands there even when the user keeps typing during
+	 * the upload. Tiptap stores its editor object on the editor element; any other element
+	 * yields null and is served by insertIntoEditor().
+	 */
+	function trackPastePosition(element) {
+		const tiptap = element && element.editor
+		if (!tiptap || !tiptap.state || !tiptap.commands
+			|| typeof tiptap.on !== 'function' || typeof tiptap.commands.insertContentAt !== 'function') {
+			return null
+		}
+
+		let { from, to } = tiptap.state.selection
+		const follow = ({ transaction }) => {
+			// -1 keeps the place in front of text typed right there after the paste.
+			from = transaction.mapping.map(from, -1)
+			to = Math.max(from, transaction.mapping.map(to, -1))
+		}
+		tiptap.on('transaction', follow)
+		return {
+			stop: () => tiptap.off('transaction', follow),
+			insert(html) {
+				try {
+					return !tiptap.isDestroyed && tiptap.commands.insertContentAt({ from, to }, html) === true
+				} catch (error) {
+					return false
+				}
+			},
+		}
+	}
+
+	/**
+	 * Hands the uploaded images to the focused editor as a synthetic paste, for editors that
+	 * trackPastePosition() does not know: the Markdown fallback editor reads the text, and the
+	 * comment field, which has no paste handler, gets the Markdown typed in at the cursor.
 	 * Returns false when the editor lost focus during the upload or did not take the content.
 	 * A paste replaces the selection, so text selected only after the original paste also
 	 * cancels the insertion.
@@ -307,6 +339,7 @@
 
 		const editor = isTextEditingTarget(event.target) ? document.activeElement : null
 		const hadSelection = !root.getSelection().isCollapsed
+		const tracked = trackPastePosition(editor)
 		const entries = []
 		let stored = 0
 		let failure = null
@@ -333,7 +366,8 @@
 			const cardStillOpen = Boolean(open) && open.cardId === context.cardId
 			const boardStillOpen = new RegExp(`/apps/deck/board/${context.boardId}(?:/|$)`).test(root.location.pathname)
 			const inserted = !failure && cardStillOpen && entries.length === images.length
-				&& insertIntoEditor(editor, entries, hadSelection)
+				&& ((tracked !== null && tracked.insert(buildEditorContent(entries).html))
+					|| insertIntoEditor(editor, entries, hadSelection))
 			const refreshed = stored === 0 || !boardStillOpen || await refreshAttachments(context.cardId)
 
 			let message = (images.length === 1 ? 'Image' : `${images.length} images`)
@@ -348,6 +382,9 @@
 			}
 			showStatus(message, failure ? 'error' : 'success', !refreshed)
 		} finally {
+			if (tracked !== null) {
+				tracked.stop()
+			}
 			uploadInProgress = false
 		}
 	}
@@ -362,6 +399,7 @@
 		insertIntoEditor,
 		parseDeckCardContext,
 		refreshAttachments,
+		trackPastePosition,
 		uploadImage,
 	}
 

@@ -168,6 +168,40 @@ globalThis.fetch = async (url, options) => {
 	}
 }
 
+// The place of the paste follows later edits: text typed in front of it shifts it, text
+// typed exactly there stays behind it.
+const listeners = []
+const insertions = []
+const tiptap = {
+	isDestroyed: false,
+	state: { selection: { from: 12, to: 12 } },
+	on: (name, listener) => listeners.push([name, listener]),
+	off: (name, listener) => listeners.splice(listeners.findIndex((entry) => entry[1] === listener), 1),
+	commands: {
+		insertContentAt: (range, html) => {
+			insertions.push([range, html])
+			return true
+		},
+	},
+}
+const tracked = app.trackPastePosition({ editor: tiptap })
+assert.equal(listeners.length, 1)
+assert.equal(listeners[0][0], 'transaction')
+const typedFiveCharsBefore = { mapping: { map: (position) => position + 5 } }
+const typedAtThePlace = { mapping: { map: (position, assoc) => (assoc < 0 ? position : position + 3) } }
+listeners[0][1]({ transaction: typedFiveCharsBefore })
+listeners[0][1]({ transaction: typedAtThePlace })
+assert.equal(tracked.insert('<img>'), true)
+assert.deepEqual(insertions, [[{ from: 17, to: 17 }, '<img>']])
+tracked.stop()
+assert.equal(listeners.length, 0)
+
+tiptap.isDestroyed = true
+assert.equal(app.trackPastePosition({ editor: tiptap }).insert('<img>'), false)
+assert.equal(insertions.length, 1)
+assert.equal(app.trackPastePosition(commentField), null)
+assert.equal(app.trackPastePosition(null), null)
+
 async function refreshAttachmentsReachesEveryDeckStore() {
 	const calls = []
 	const warnings = []
