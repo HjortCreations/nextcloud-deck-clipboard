@@ -43,10 +43,10 @@ The app loads a small JavaScript listener only on authenticated Deck pages. When
 
 When the image is pasted into the card description or the comment field, the app waits for the upload and then inserts a link to the attachment preview at the cursor:
 
-- The description editor (Nextcloud Text) is a Tiptap editor that keeps its editor object on the editor element. The app remembers the position of the paste, follows it through later edits and inserts a linked image there, so text typed during the upload stays in place. The editor saves the image together with that text. If the editor object is not available, the app sends the editor a synthetic paste event instead.
+- The description editor (Nextcloud Text) is a Tiptap editor that keeps its editor object on the editor element. The app remembers the position of the paste, follows it through later edits and inserts a linked image there, so text typed during the upload stays in place. The image is only inserted; if text was selected, it goes in front of it and replaces nothing. The editor saves the image together with that text. If the editor object is not available, the app sends the editor a synthetic paste event instead.
 - The comment field receives the Markdown image syntax as typed text at the cursor. Deck renders it as an image once the comment is posted.
 
-In any other text field, or if the card was closed during the upload, the image is uploaded as an attachment only. The same applies to the comment field when it lost focus or text was selected in it during the upload. A file that Nextcloud cannot generate a preview for, such as an SVG with the default settings, is inserted as a link to the file instead of an image.
+In any other text field, or if the card was closed during the upload, the image is uploaded as an attachment only. The same applies to the comment field when it lost focus during the upload or text is selected in it. A file that Nextcloud cannot generate a preview for, such as an SVG with the default settings, is inserted as a link to the file instead of an image.
 
 After every upload the app runs the `fetchAttachments` action of Deck's own store. Deck then loads the attachments of the card again and updates the attachment list, the attachment count and the cover image on the board, so the page is not reloaded.
 
