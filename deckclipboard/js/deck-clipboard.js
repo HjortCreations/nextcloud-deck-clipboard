@@ -166,7 +166,7 @@
 			await fetching
 			return true
 		} catch (error) {
-			console.warn('deckclipboard: could not refresh the attachments through the Deck store, falling back to a page reload.', error)
+			console.warn('deckclipboard: could not refresh the attachments through the Deck store, offering a manual reload instead.', error)
 			return false
 		}
 	}
@@ -304,11 +304,9 @@
 				+ (inserted ? ' uploaded and inserted.' : ' uploaded.')
 			if (refreshed) {
 				showStatus(done)
-			} else if (editor) {
-				showStatus(`${done} Reload after saving your text changes.`, 'success', true)
 			} else {
-				showStatus(done)
-				root.setTimeout(() => root.location.reload(), 700)
+				const hint = editor ? 'Reload after saving your text changes.' : 'Reload to update the attachment list.'
+				showStatus(`${done} ${hint}`, 'success', true)
 			}
 		} catch (error) {
 			showStatus(`Image upload failed: ${error.message}`, 'error')
