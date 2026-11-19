@@ -50,10 +50,113 @@ globalThis.OC = {
 	getRootPath: () => '/nextcloud',
 	requestToken: 'test-token',
 }
+globalThis.location = { origin: 'https://cloud.example.org' }
 assert.equal(
 	app.buildUploadUrl({ boardId: 3, cardId: 389 }),
 	'/nextcloud/ocs/v2.php/apps/deck/api/v1.0/cards/389/attachment?boardId=3&format=json',
 )
+
+assert.deepEqual(
+	app.buildEditorEntry({ id: 7, cardId: 389, extendedData: { fileid: 1234, hasPreview: true } }, 'clipboard-a.png'),
+	{
+		name: 'clipboard-a.png',
+		image: true,
+		url: 'https://cloud.example.org/nextcloud/index.php/core/preview?fileId=1234&x=600&y=600&a=true',
+	},
+)
+assert.deepEqual(
+	app.buildEditorEntry({ id: 7, cardId: 389, extendedData: { fileid: 1234, hasPreview: false } }, 'clipboard-a.svg'),
+	{ name: 'clipboard-a.svg', image: false, url: 'https://cloud.example.org/nextcloud/index.php/f/1234' },
+)
+assert.equal(
+	app.buildEditorEntry({ id: 7, cardId: 389, extendedData: { fileid: '1"><script>', hasPreview: true } }, 'a.png').url,
+	'https://cloud.example.org/nextcloud/index.php/core/preview?fileId=1%22%3E%3Cscript%3E&x=600&y=600&a=true',
+)
+assert.equal(app.buildEditorEntry({ id: 7, cardId: 389, extendedData: {} }, 'a.png'), null)
+assert.equal(app.buildEditorEntry({ id: 7, cardId: 389 }, 'a.png'), null)
+
+assert.deepEqual(
+	app.buildEditorContent([
+		{ name: 'clipboard-a.png', image: true, url: '/preview?fileId=1&x=600' },
+		{ name: 'clipboard-b.svg', image: false, url: '/f/2' },
+	]),
+	{
+		html: '<a href="/preview?fileId=1&amp;x=600"><img src="/preview?fileId=1&amp;x=600" alt="clipboard-a.png"></a>'
+			+ '<a href="/f/2">clipboard-b.svg</a>',
+		text: '![clipboard-a.png](/preview?fileId=1&x=600)\n[clipboard-b.svg](/f/2)',
+	},
+)
+
+globalThis.DataTransfer = class {
+	constructor() {
+		this.data = {}
+	}
+
+	setData(type, value) {
+		this.data[type] = value
+	}
+}
+globalThis.ClipboardEvent = class {
+	constructor(type, init) {
+		Object.assign(this, init, { type })
+	}
+}
+const typed = []
+globalThis.document = {
+	activeElement: null,
+	execCommand: (command, showUi, value) => {
+		typed.push([command, value])
+		return true
+	},
+}
+function fakeEditor({ handlesPaste, isContentEditable }) {
+	const editor = {
+		isContentEditable,
+		pasted: null,
+		// dispatchEvent() returns false when a listener called preventDefault().
+		dispatchEvent(event) {
+			editor.pasted = event.clipboardData.data
+			return !handlesPaste
+		},
+	}
+	return editor
+}
+const selection = { isCollapsed: true }
+globalThis.getSelection = () => selection
+const uploaded = [{ name: 'clipboard-a.png', image: true, url: '/preview?fileId=1' }]
+
+const descriptionEditor = fakeEditor({ handlesPaste: true, isContentEditable: true })
+document.activeElement = descriptionEditor
+assert.equal(app.insertIntoEditor(descriptionEditor, uploaded), true)
+assert.equal(
+	descriptionEditor.pasted['text/html'],
+	'<a href="/preview?fileId=1"><img src="/preview?fileId=1" alt="clipboard-a.png"></a>',
+)
+assert.equal(descriptionEditor.pasted['text/plain'], '![clipboard-a.png](/preview?fileId=1)')
+assert.deepEqual(typed, [])
+
+const commentField = fakeEditor({ handlesPaste: false, isContentEditable: true })
+document.activeElement = commentField
+assert.equal(app.insertIntoEditor(commentField, uploaded), true)
+assert.deepEqual(typed, [['insertText', '![clipboard-a.png](/preview?fileId=1)']])
+
+const titleInput = fakeEditor({ handlesPaste: false, isContentEditable: false })
+document.activeElement = titleInput
+assert.equal(app.insertIntoEditor(titleInput, uploaded), false)
+assert.equal(typed.length, 1)
+
+const blurredEditor = fakeEditor({ handlesPaste: true, isContentEditable: true })
+assert.equal(app.insertIntoEditor(blurredEditor, uploaded), false)
+assert.equal(blurredEditor.pasted, null)
+assert.equal(app.insertIntoEditor(null, uploaded), false)
+
+// Selected text would be replaced by the insertion, so the image stays an attachment only.
+const editorWithSelection = fakeEditor({ handlesPaste: true, isContentEditable: true })
+document.activeElement = editorWithSelection
+selection.isCollapsed = false
+assert.equal(app.insertIntoEditor(editorWithSelection, uploaded), false)
+assert.equal(editorWithSelection.pasted, null)
+selection.isCollapsed = true
 
 let capturedRequest = null
 globalThis.fetch = async (url, options) => {
@@ -64,7 +167,82 @@ globalThis.fetch = async (url, options) => {
 	}
 }
 
-app.uploadImage(new Blob(['image'], { type: 'image/png' }), 'clipboard-test.png', { boardId: 3, cardId: 389 })
+// The place of the paste follows later edits: text typed in front of it shifts it, text
+// typed exactly there stays behind it. A selected range is not replaced, only its start is used.
+const listeners = []
+const insertions = []
+const tiptap = {
+	isDestroyed: false,
+	state: { selection: { from: 12, to: 20 } },
+	on: (name, listener) => listeners.push([name, listener]),
+	off: (name, listener) => listeners.splice(listeners.findIndex((entry) => entry[1] === listener), 1),
+	commands: {
+		insertContentAt: (position, html, options) => {
+			insertions.push([position, html, options])
+			return true
+		},
+	},
+}
+const tracked = app.trackPastePosition({ editor: tiptap })
+assert.equal(listeners.length, 1)
+assert.equal(listeners[0][0], 'transaction')
+const typedFiveCharsBefore = { mapping: { map: (position) => position + 5 } }
+const typedAtThePlace = { mapping: { map: (position, assoc) => (assoc < 0 ? position : position + 3) } }
+listeners[0][1]({ transaction: typedFiveCharsBefore })
+listeners[0][1]({ transaction: typedAtThePlace })
+assert.equal(tracked.insert('<img>'), true)
+assert.deepEqual(insertions, [[17, '<img>', { updateSelection: false }]])
+tracked.stop()
+assert.equal(listeners.length, 0)
+
+tiptap.isDestroyed = true
+assert.equal(app.trackPastePosition({ editor: tiptap }).insert('<img>'), false)
+assert.equal(insertions.length, 1)
+assert.equal(app.trackPastePosition(commentField), null)
+assert.equal(app.trackPastePosition(null), null)
+
+async function refreshAttachmentsReachesEveryDeckStore() {
+	const calls = []
+	const warnings = []
+	const elements = {}
+	const originalWarn = console.warn
+	console.warn = (...args) => warnings.push(args)
+	document.getElementById = (id) => elements[id] || null
+
+	const piniaWithAttachments = {
+		_s: new Map([['attachment', { fetchAttachments: async (cardId) => calls.push(['pinia', cardId]) }]]),
+	}
+	const vuex = { dispatch: async (action, cardId) => calls.push([action, cardId]) }
+
+	// Deck 1.19.1 and later: Vue 3 app with Pinia.
+	elements.content = { __vue_app__: { config: { globalProperties: { $pinia: piniaWithAttachments } } } }
+	assert.equal(await app.refreshAttachments(389), true)
+
+	// Deck 1.19.0: Vue 2 instance with Pinia.
+	delete elements.content
+	elements['content-vue'] = { __vue__: { $pinia: piniaWithAttachments, $store: {} } }
+	assert.equal(await app.refreshAttachments(389), true)
+
+	// Deck 1.18: Vuex holds the attachments, Pinia only unrelated stores.
+	elements['content-vue'] = { __vue__: { $pinia: { _s: new Map([['actions', {}]]) }, $store: vuex } }
+	assert.equal(await app.refreshAttachments(389), true)
+	assert.deepEqual(calls, [['pinia', 389], ['pinia', 389], ['fetchAttachments', 389]])
+	assert.equal(warnings.length, 0)
+
+	vuex.dispatch = () => undefined
+	assert.equal(await app.refreshAttachments(389), false)
+	vuex.dispatch = async () => {
+		throw new Error('offline')
+	}
+	assert.equal(await app.refreshAttachments(389), false)
+	delete elements['content-vue']
+	assert.equal(await app.refreshAttachments(389), false)
+	assert.equal(warnings.length, 3)
+	console.warn = originalWarn
+}
+
+refreshAttachmentsReachesEveryDeckStore()
+	.then(() => app.uploadImage(new Blob(['image'], { type: 'image/png' }), 'clipboard-test.png', { boardId: 3, cardId: 389 }))
 	.then((result) => {
 		assert.deepEqual(result, { id: 7 })
 		assert.equal(capturedRequest.options.method, 'POST')

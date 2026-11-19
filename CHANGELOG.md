@@ -2,6 +2,20 @@
 
 All notable changes to this project are documented in this file.
 
+## [Unreleased]
+
+### Added
+
+- An image pasted into the card description or the comment field is inserted at the cursor after the upload.
+
+### Changed
+
+- The page is no longer reloaded after an upload. The attachment list, the attachment count and the card cover are refreshed through Deck's store. When the store cannot be reached, the app logs a warning to the browser console and offers a manual reload button.
+
+### Fixed
+
+- Pasting an image into the comment field no longer reloads the card and discards the unsent comment.
+
 ## [0.1.1] - 2026-09-25
 
 ### Changed

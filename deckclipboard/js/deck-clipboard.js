@@ -97,6 +97,135 @@
 		return `${rootPath}/ocs/v2.php/apps/deck/api/v1.0/cards/${context.cardId}/attachment?boardId=${context.boardId}&format=json`
 	}
 
+	/**
+	 * Describes what to put into the editor for an uploaded attachment, or returns null when
+	 * the response names no file. The URL is absolute, because the Text editor treats a
+	 * relative image source as a file path in the user's storage. Without a preview the
+	 * preview route answers 404, so the entry becomes a plain link to the file.
+	 */
+	function buildEditorEntry(attachment, name) {
+		const data = attachment.extendedData || {}
+		if (!data.fileid) {
+			return null
+		}
+
+		const base = `${root.location.origin}${getNextcloudRoot().replace(/\/$/, '')}/index.php`
+		const fileId = encodeURIComponent(data.fileid)
+		return data.hasPreview
+			? { name, image: true, url: `${base}/core/preview?fileId=${fileId}&x=600&y=600&a=true` }
+			: { name, image: false, url: `${base}/f/${fileId}` }
+	}
+
+	// The names come from buildFilename() and the URLs from buildEditorEntry(), so only "&" needs escaping.
+	function buildEditorContent(entries) {
+		return {
+			html: entries.map(({ name, image, url }) => {
+				const escaped = url.replace(/&/g, '&amp;')
+				return `<a href="${escaped}">${image ? `<img src="${escaped}" alt="${name}">` : name}</a>`
+			}).join(''),
+			text: entries.map(({ name, image, url }) => `${image ? '!' : ''}[${name}](${url})`).join('\n'),
+		}
+	}
+
+	/**
+	 * Remembers where the paste happened in the description editor and follows that place
+	 * through later edits, so the image lands there even when the user keeps typing during
+	 * the upload. Only the start of the selection is kept: the image is inserted, it never
+	 * replaces text, because the selected range may hold newer text by then.
+	 * Tiptap stores its editor object on the editor element; any other element yields null
+	 * and is served by insertIntoEditor().
+	 */
+	function trackPastePosition(element) {
+		const tiptap = element && element.editor
+		if (!tiptap || !tiptap.state || !tiptap.commands
+			|| typeof tiptap.on !== 'function' || typeof tiptap.commands.insertContentAt !== 'function') {
+			return null
+		}
+
+		let position = tiptap.state.selection.from
+		const follow = ({ transaction }) => {
+			// -1 keeps the place in front of text typed right there after the paste.
+			position = transaction.mapping.map(position, -1)
+		}
+		tiptap.on('transaction', follow)
+		return {
+			stop: () => tiptap.off('transaction', follow),
+			insert(html) {
+				try {
+					// The caret stays where the user has it by now.
+					return !tiptap.isDestroyed
+						&& tiptap.commands.insertContentAt(position, html, { updateSelection: false }) === true
+				} catch (error) {
+					return false
+				}
+			},
+		}
+	}
+
+	/**
+	 * Hands the uploaded images to the focused editor as a synthetic paste, for editors that
+	 * trackPastePosition() does not know: the Markdown fallback editor reads the text, and the
+	 * comment field, which has no paste handler, gets the Markdown typed in at the cursor.
+	 * Returns false when the editor lost focus during the upload or did not take the content.
+	 * Inserted text replaces the selection, so nothing is inserted while text is selected.
+	 */
+	function insertIntoEditor(editor, entries) {
+		if (!editor || entries.length === 0 || document.activeElement !== editor) {
+			return false
+		}
+		if (!root.getSelection().isCollapsed) {
+			return false
+		}
+
+		try {
+			const content = buildEditorContent(entries)
+			const clipboardData = new root.DataTransfer()
+			clipboardData.setData('text/html', content.html)
+			clipboardData.setData('text/plain', content.text)
+			const pasteHandled = !editor.dispatchEvent(new root.ClipboardEvent('paste', {
+				clipboardData,
+				bubbles: true,
+				cancelable: true,
+			}))
+			return pasteHandled
+				|| (editor.isContentEditable === true && document.execCommand('insertText', false, content.text))
+		} catch (error) {
+			// The browser cannot construct a DataTransfer or a ClipboardEvent.
+			return false
+		}
+	}
+
+	/**
+	 * Runs Deck's own fetchAttachments action, which reloads the attachment list of the card
+	 * and its attachment count and cover on the board. Deck has no public API for this, so
+	 * the store is reached through Vue internals: Vuex on Deck 1.18, Pinia on Deck 1.19,
+	 * where 1.19.0 still runs on Vue 2 and later releases on Vue 3.
+	 * Returns false when the store is not there or the request fails.
+	 */
+	async function refreshAttachments(cardId) {
+		try {
+			const vue3Root = document.getElementById('content')
+			const vue2Root = document.getElementById('content-vue')
+			const vue2 = vue2Root && vue2Root.__vue__
+			const pinia = vue3Root && vue3Root.__vue_app__
+				? vue3Root.__vue_app__.config.globalProperties.$pinia
+				: vue2 && vue2.$pinia
+			const store = pinia && pinia._s.get('attachment')
+			const fetching = store
+				? store.fetchAttachments(cardId)
+				: vue2.$store.dispatch('fetchAttachments', cardId)
+			// Vuex returns undefined instead of throwing when the action does not exist.
+			if (!fetching || typeof fetching.then !== 'function') {
+				throw new Error('Deck store has no fetchAttachments action')
+			}
+			await fetching
+			return true
+		} catch (error) {
+			console.warn('deckclipboard: could not refresh the attachments through the Deck store, offering a manual reload instead.', error)
+			return false
+		}
+	}
+
 	function showStatus(message, kind = 'info', offerReload = false) {
 		if (statusTimer !== null) {
 			root.clearTimeout(statusTimer)
@@ -138,8 +267,8 @@
 		if (!target || !(target instanceof Element)) {
 			return false
 		}
-		return target.matches('input, textarea, [contenteditable="true"], [contenteditable=""]')
-			|| Boolean(target.closest('[contenteditable="true"], [contenteditable=""]'))
+		// isContentEditable also covers contenteditable="plaintext-only", which Deck's comment field uses.
+		return target.matches('input, textarea') || target.isContentEditable === true
 	}
 
 	async function responseError(response) {
@@ -210,40 +339,68 @@
 			return
 		}
 
+		const editor = isTextEditingTarget(event.target) ? document.activeElement : null
+		const tracked = trackPastePosition(editor)
+		const entries = []
+		let stored = 0
+		let failure = null
 		uploadInProgress = true
 		showStatus(images.length === 1 ? 'Uploading image …' : `Uploading ${images.length} images …`)
 		try {
 			const now = new Date()
-			for (let index = 0; index < images.length; index += 1) {
-				await uploadImage(images[index], buildFilename(images[index], index, now), context)
+			try {
+				for (let index = 0; index < images.length; index += 1) {
+					const name = buildFilename(images[index], index, now)
+					const attachment = await uploadImage(images[index], name, context)
+					stored += 1
+					const entry = attachment && buildEditorEntry(attachment, name)
+					if (entry) {
+						entries.push(entry)
+					}
+				}
+			} catch (error) {
+				failure = error
 			}
 
-			const textWasBeingEdited = isTextEditingTarget(event.target)
-			if (textWasBeingEdited) {
-				showStatus(
-					images.length === 1
-						? 'Image uploaded. Reload after saving your text changes.'
-						: `${images.length} images uploaded. Reload after saving your text changes.`,
-					'success',
-					true,
-				)
-			} else {
-				showStatus(images.length === 1 ? 'Image uploaded.' : `${images.length} images uploaded.`)
-				root.setTimeout(() => root.location.reload(), 700)
+			// The user may have closed the card or left the board while the upload ran.
+			const open = parseDeckCardContext(root.location.pathname)
+			const cardStillOpen = Boolean(open) && open.cardId === context.cardId
+			const boardStillOpen = new RegExp(`/apps/deck/board/${context.boardId}(?:/|$)`).test(root.location.pathname)
+			const inserted = !failure && cardStillOpen && entries.length === images.length
+				&& ((tracked !== null && tracked.insert(buildEditorContent(entries).html))
+					|| insertIntoEditor(editor, entries))
+			const refreshed = stored === 0 || !boardStillOpen || await refreshAttachments(context.cardId)
+
+			let message = (images.length === 1 ? 'Image' : `${images.length} images`)
+				+ (inserted ? ' uploaded and inserted.' : ' uploaded.')
+			if (failure) {
+				message = stored > 0
+					? `${stored} of ${images.length} images uploaded, then the upload failed: ${failure.message}`
+					: `Image upload failed: ${failure.message}`
 			}
-		} catch (error) {
-			showStatus(`Image upload failed: ${error.message}`, 'error')
+			if (!refreshed) {
+				message += editor ? ' Reload after saving your text changes.' : ' Reload to update the attachment list.'
+			}
+			showStatus(message, failure ? 'error' : 'success', !refreshed)
 		} finally {
+			if (tracked !== null) {
+				tracked.stop()
+			}
 			uploadInProgress = false
 		}
 	}
 
 	const exported = {
+		buildEditorContent,
+		buildEditorEntry,
 		buildFilename,
 		buildUploadUrl,
 		extensionFor,
 		getClipboardImages,
+		insertIntoEditor,
 		parseDeckCardContext,
+		refreshAttachments,
+		trackPastePosition,
 		uploadImage,
 	}
 
