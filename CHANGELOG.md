@@ -10,7 +10,7 @@ All notable changes to this project are documented in this file.
 
 ### Changed
 
-- The page is no longer reloaded after an upload. The attachment list, the attachment count and the card cover are refreshed through Deck's store. A reload remains as a fallback, logged to the browser console, when the store cannot be reached.
+- The page is no longer reloaded after an upload. The attachment list, the attachment count and the card cover are refreshed through Deck's store. When the store cannot be reached, the app logs a warning to the browser console and offers a manual reload button.
 
 ### Fixed
 

@@ -50,13 +50,13 @@ In any other text field, or if the editor lost focus during the upload, the imag
 
 After every upload the app runs the `fetchAttachments` action of Deck's own store. Deck then loads the attachments of the card again and updates the attachment list, the attachment count and the cover image on the board, so the page is not reloaded.
 
-If the Deck store cannot be reached, the app logs a warning to the browser console and falls back to a reload: automatically when no text field is being edited, otherwise through a manual reload button so unsaved text is not discarded.
+If the Deck store cannot be reached, the app logs a warning to the browser console and shows a manual reload button instead. It never reloads the page on its own, so unsaved text is not discarded.
 
 ## Limitations
 
 - Inserted images use an absolute URL of the attachment preview, because the Text editor resolves a relative image source as a file path. The links stop working if the address of the Nextcloud instance changes.
-- On Nextcloud 34 (tested with Text 8.0.1) the Text editor does not display images in the Deck description and shows a loading placeholder instead. The same happens with images added through Deck's own "Add attachment" action. The image link is still saved and the attachment is listed. On Nextcloud 35 the image is displayed.
-- Deck has no public API for refreshing attachments, so the app reaches Deck's store through Vue internals (Vuex in Deck 1.18, Pinia in Deck 1.19). If a Deck update changes that, the app falls back to reloading the page.
+- On Nextcloud 34 (tested with Text 8.0.1) the Text editor does not display images in the Deck description and shows a loading placeholder instead. The same happens with images added through Deck's own "Add attachment" action, see [nextcloud/deck#5680](https://github.com/nextcloud/deck/issues/5680) and [nextcloud/deck#5448](https://github.com/nextcloud/deck/issues/5448). The image link is still saved and the attachment is listed. On Nextcloud 35 the image is displayed.
+- Deck has no public API for refreshing attachments, so the app reaches Deck's store through Vue internals (Vuex in Deck 1.18, Pinia in Deck 1.19). If a Deck update changes that, the app offers a manual reload button instead.
 - Browser clipboard support varies. The app requires the browser to expose the copied image as a clipboard file.
 - Version `0.1.1` has only been verified on the versions listed above.
 - User-interface messages are currently in English only.
