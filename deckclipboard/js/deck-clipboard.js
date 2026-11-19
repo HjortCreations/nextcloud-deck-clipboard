@@ -130,8 +130,10 @@
 	/**
 	 * Remembers where the paste happened in the description editor and follows that place
 	 * through later edits, so the image lands there even when the user keeps typing during
-	 * the upload. Tiptap stores its editor object on the editor element; any other element
-	 * yields null and is served by insertIntoEditor().
+	 * the upload. Only the start of the selection is kept: the image is inserted, it never
+	 * replaces text, because the selected range may hold newer text by then.
+	 * Tiptap stores its editor object on the editor element; any other element yields null
+	 * and is served by insertIntoEditor().
 	 */
 	function trackPastePosition(element) {
 		const tiptap = element && element.editor
@@ -140,18 +142,19 @@
 			return null
 		}
 
-		let { from, to } = tiptap.state.selection
+		let position = tiptap.state.selection.from
 		const follow = ({ transaction }) => {
 			// -1 keeps the place in front of text typed right there after the paste.
-			from = transaction.mapping.map(from, -1)
-			to = Math.max(from, transaction.mapping.map(to, -1))
+			position = transaction.mapping.map(position, -1)
 		}
 		tiptap.on('transaction', follow)
 		return {
 			stop: () => tiptap.off('transaction', follow),
 			insert(html) {
 				try {
-					return !tiptap.isDestroyed && tiptap.commands.insertContentAt({ from, to }, html) === true
+					// The caret stays where the user has it by now.
+					return !tiptap.isDestroyed
+						&& tiptap.commands.insertContentAt(position, html, { updateSelection: false }) === true
 				} catch (error) {
 					return false
 				}
@@ -164,14 +167,13 @@
 	 * trackPastePosition() does not know: the Markdown fallback editor reads the text, and the
 	 * comment field, which has no paste handler, gets the Markdown typed in at the cursor.
 	 * Returns false when the editor lost focus during the upload or did not take the content.
-	 * A paste replaces the selection, so text selected only after the original paste also
-	 * cancels the insertion.
+	 * Inserted text replaces the selection, so nothing is inserted while text is selected.
 	 */
-	function insertIntoEditor(editor, entries, hadSelection) {
+	function insertIntoEditor(editor, entries) {
 		if (!editor || entries.length === 0 || document.activeElement !== editor) {
 			return false
 		}
-		if (!hadSelection && !root.getSelection().isCollapsed) {
+		if (!root.getSelection().isCollapsed) {
 			return false
 		}
 
@@ -338,7 +340,6 @@
 		}
 
 		const editor = isTextEditingTarget(event.target) ? document.activeElement : null
-		const hadSelection = !root.getSelection().isCollapsed
 		const tracked = trackPastePosition(editor)
 		const entries = []
 		let stored = 0
@@ -367,7 +368,7 @@
 			const boardStillOpen = new RegExp(`/apps/deck/board/${context.boardId}(?:/|$)`).test(root.location.pathname)
 			const inserted = !failure && cardStillOpen && entries.length === images.length
 				&& ((tracked !== null && tracked.insert(buildEditorContent(entries).html))
-					|| insertIntoEditor(editor, entries, hadSelection))
+					|| insertIntoEditor(editor, entries))
 			const refreshed = stored === 0 || !boardStillOpen || await refreshAttachments(context.cardId)
 
 			let message = (images.length === 1 ? 'Image' : `${images.length} images`)
