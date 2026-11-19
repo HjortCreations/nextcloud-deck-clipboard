@@ -97,23 +97,33 @@
 		return `${rootPath}/ocs/v2.php/apps/deck/api/v1.0/cards/${context.cardId}/attachment?boardId=${context.boardId}&format=json`
 	}
 
-	// Absolute, because the Text editor treats a relative image source as a file path in the user's storage.
-	function buildPreviewUrl(attachment) {
+	/**
+	 * Describes what to put into the editor for an uploaded attachment, or returns null when
+	 * the response names no file. The URL is absolute, because the Text editor treats a
+	 * relative image source as a file path in the user's storage. Without a preview the
+	 * preview route answers 404, so the entry becomes a plain link to the file.
+	 */
+	function buildEditorEntry(attachment, name) {
+		const data = attachment.extendedData || {}
+		if (!data.fileid) {
+			return null
+		}
+
 		const base = `${root.location.origin}${getNextcloudRoot().replace(/\/$/, '')}/index.php`
-		const fileId = attachment.extendedData && attachment.extendedData.fileid
-		return fileId
-			? `${base}/core/preview?fileId=${encodeURIComponent(fileId)}&x=600&y=600&a=true`
-			: `${base}/apps/deck/cards/${encodeURIComponent(attachment.cardId)}/attachment/${encodeURIComponent(attachment.id)}`
+		const fileId = encodeURIComponent(data.fileid)
+		return data.hasPreview
+			? { name, image: true, url: `${base}/core/preview?fileId=${fileId}&x=600&y=600&a=true` }
+			: { name, image: false, url: `${base}/f/${fileId}` }
 	}
 
-	// The names come from buildFilename() and the URLs from buildPreviewUrl(), so only "&" needs escaping.
-	function buildEditorContent(images) {
+	// The names come from buildFilename() and the URLs from buildEditorEntry(), so only "&" needs escaping.
+	function buildEditorContent(entries) {
 		return {
-			html: images.map(({ name, url }) => {
+			html: entries.map(({ name, image, url }) => {
 				const escaped = url.replace(/&/g, '&amp;')
-				return `<a href="${escaped}"><img src="${escaped}" alt="${name}"></a>`
+				return `<a href="${escaped}">${image ? `<img src="${escaped}" alt="${name}">` : name}</a>`
 			}).join(''),
-			text: images.map(({ name, url }) => `![${name}](${url})`).join('\n'),
+			text: entries.map(({ name, image, url }) => `${image ? '!' : ''}[${name}](${url})`).join('\n'),
 		}
 	}
 
@@ -122,14 +132,19 @@
 	 * editor reads the HTML, the Markdown fallback editor reads the text. The comment field
 	 * has no paste handler of its own, so it gets the Markdown typed in at the cursor.
 	 * Returns false when the editor lost focus during the upload or did not take the content.
+	 * A paste replaces the selection, so text selected only after the original paste also
+	 * cancels the insertion.
 	 */
-	function insertIntoEditor(editor, images) {
-		if (!editor || images.length === 0 || document.activeElement !== editor) {
+	function insertIntoEditor(editor, entries, hadSelection) {
+		if (!editor || entries.length === 0 || document.activeElement !== editor) {
+			return false
+		}
+		if (!hadSelection && !root.getSelection().isCollapsed) {
 			return false
 		}
 
 		try {
-			const content = buildEditorContent(images)
+			const content = buildEditorContent(entries)
 			const clipboardData = new root.DataTransfer()
 			clipboardData.setData('text/html', content.html)
 			clipboardData.setData('text/plain', content.text)
@@ -149,16 +164,22 @@
 	/**
 	 * Runs Deck's own fetchAttachments action, which reloads the attachment list of the card
 	 * and its attachment count and cover on the board. Deck has no public API for this, so
-	 * the store is reached through Vue internals: Pinia on Deck 1.19, Vuex on Deck 1.18.
+	 * the store is reached through Vue internals: Vuex on Deck 1.18, Pinia on Deck 1.19,
+	 * where 1.19.0 still runs on Vue 2 and later releases on Vue 3.
 	 * Returns false when the store is not there or the request fails.
 	 */
 	async function refreshAttachments(cardId) {
 		try {
 			const vue3Root = document.getElementById('content')
 			const vue2Root = document.getElementById('content-vue')
-			const fetching = vue3Root && vue3Root.__vue_app__
-				? vue3Root.__vue_app__.config.globalProperties.$pinia._s.get('attachment').fetchAttachments(cardId)
-				: vue2Root.__vue__.$store.dispatch('fetchAttachments', cardId)
+			const vue2 = vue2Root && vue2Root.__vue__
+			const pinia = vue3Root && vue3Root.__vue_app__
+				? vue3Root.__vue_app__.config.globalProperties.$pinia
+				: vue2 && vue2.$pinia
+			const store = pinia && pinia._s.get('attachment')
+			const fetching = store
+				? store.fetchAttachments(cardId)
+				: vue2.$store.dispatch('fetchAttachments', cardId)
 			// Vuex returns undefined instead of throwing when the action does not exist.
 			if (!fetching || typeof fetching.then !== 'function') {
 				throw new Error('Deck store has no fetchAttachments action')
@@ -285,31 +306,46 @@
 		}
 
 		const editor = isTextEditingTarget(event.target) ? document.activeElement : null
+		const hadSelection = !root.getSelection().isCollapsed
+		const entries = []
+		let stored = 0
+		let failure = null
 		uploadInProgress = true
 		showStatus(images.length === 1 ? 'Uploading image …' : `Uploading ${images.length} images …`)
 		try {
 			const now = new Date()
-			const uploaded = []
-			for (let index = 0; index < images.length; index += 1) {
-				const name = buildFilename(images[index], index, now)
-				const attachment = await uploadImage(images[index], name, context)
-				if (attachment) {
-					uploaded.push({ name, url: buildPreviewUrl(attachment) })
+			try {
+				for (let index = 0; index < images.length; index += 1) {
+					const name = buildFilename(images[index], index, now)
+					const attachment = await uploadImage(images[index], name, context)
+					stored += 1
+					const entry = attachment && buildEditorEntry(attachment, name)
+					if (entry) {
+						entries.push(entry)
+					}
 				}
+			} catch (error) {
+				failure = error
 			}
 
-			const inserted = uploaded.length === images.length && insertIntoEditor(editor, uploaded)
-			const refreshed = await refreshAttachments(context.cardId)
-			const done = (images.length === 1 ? 'Image' : `${images.length} images`)
+			// The user may have moved to another card while the upload ran.
+			const open = parseDeckCardContext(root.location.pathname)
+			const cardStillOpen = Boolean(open) && open.cardId === context.cardId
+			const inserted = !failure && cardStillOpen && entries.length === images.length
+				&& insertIntoEditor(editor, entries, hadSelection)
+			const refreshed = stored === 0 || !cardStillOpen || await refreshAttachments(context.cardId)
+
+			let message = (images.length === 1 ? 'Image' : `${images.length} images`)
 				+ (inserted ? ' uploaded and inserted.' : ' uploaded.')
-			if (refreshed) {
-				showStatus(done)
-			} else {
-				const hint = editor ? 'Reload after saving your text changes.' : 'Reload to update the attachment list.'
-				showStatus(`${done} ${hint}`, 'success', true)
+			if (failure) {
+				message = stored > 0
+					? `${stored} of ${images.length} images uploaded, then the upload failed: ${failure.message}`
+					: `Image upload failed: ${failure.message}`
 			}
-		} catch (error) {
-			showStatus(`Image upload failed: ${error.message}`, 'error')
+			if (!refreshed) {
+				message += editor ? ' Reload after saving your text changes.' : ' Reload to update the attachment list.'
+			}
+			showStatus(message, failure ? 'error' : 'success', !refreshed)
 		} finally {
 			uploadInProgress = false
 		}
@@ -317,8 +353,8 @@
 
 	const exported = {
 		buildEditorContent,
+		buildEditorEntry,
 		buildFilename,
-		buildPreviewUrl,
 		buildUploadUrl,
 		extensionFor,
 		getClipboardImages,

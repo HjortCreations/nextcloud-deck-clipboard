@@ -56,28 +56,34 @@ assert.equal(
 	'/nextcloud/ocs/v2.php/apps/deck/api/v1.0/cards/389/attachment?boardId=3&format=json',
 )
 
-assert.equal(
-	app.buildPreviewUrl({ id: 7, cardId: 389, extendedData: { fileid: 1234 } }),
-	'https://cloud.example.org/nextcloud/index.php/core/preview?fileId=1234&x=600&y=600&a=true',
+assert.deepEqual(
+	app.buildEditorEntry({ id: 7, cardId: 389, extendedData: { fileid: 1234, hasPreview: true } }, 'clipboard-a.png'),
+	{
+		name: 'clipboard-a.png',
+		image: true,
+		url: 'https://cloud.example.org/nextcloud/index.php/core/preview?fileId=1234&x=600&y=600&a=true',
+	},
+)
+assert.deepEqual(
+	app.buildEditorEntry({ id: 7, cardId: 389, extendedData: { fileid: 1234, hasPreview: false } }, 'clipboard-a.svg'),
+	{ name: 'clipboard-a.svg', image: false, url: 'https://cloud.example.org/nextcloud/index.php/f/1234' },
 )
 assert.equal(
-	app.buildPreviewUrl({ id: 7, cardId: 389, extendedData: {} }),
-	'https://cloud.example.org/nextcloud/index.php/apps/deck/cards/389/attachment/7',
-)
-assert.equal(
-	app.buildPreviewUrl({ id: 7, cardId: 389, extendedData: { fileid: '1"><script>' } }),
+	app.buildEditorEntry({ id: 7, cardId: 389, extendedData: { fileid: '1"><script>', hasPreview: true } }, 'a.png').url,
 	'https://cloud.example.org/nextcloud/index.php/core/preview?fileId=1%22%3E%3Cscript%3E&x=600&y=600&a=true',
 )
+assert.equal(app.buildEditorEntry({ id: 7, cardId: 389, extendedData: {} }, 'a.png'), null)
+assert.equal(app.buildEditorEntry({ id: 7, cardId: 389 }, 'a.png'), null)
 
 assert.deepEqual(
 	app.buildEditorContent([
-		{ name: 'clipboard-a.png', url: '/preview?fileId=1&x=600' },
-		{ name: 'clipboard-b.png', url: '/preview?fileId=2&x=600' },
+		{ name: 'clipboard-a.png', image: true, url: '/preview?fileId=1&x=600' },
+		{ name: 'clipboard-b.svg', image: false, url: '/f/2' },
 	]),
 	{
 		html: '<a href="/preview?fileId=1&amp;x=600"><img src="/preview?fileId=1&amp;x=600" alt="clipboard-a.png"></a>'
-			+ '<a href="/preview?fileId=2&amp;x=600"><img src="/preview?fileId=2&amp;x=600" alt="clipboard-b.png"></a>',
-		text: '![clipboard-a.png](/preview?fileId=1&x=600)\n![clipboard-b.png](/preview?fileId=2&x=600)',
+			+ '<a href="/f/2">clipboard-b.svg</a>',
+		text: '![clipboard-a.png](/preview?fileId=1&x=600)\n[clipboard-b.svg](/f/2)',
 	},
 )
 
@@ -115,11 +121,13 @@ function fakeEditor({ handlesPaste, isContentEditable }) {
 	}
 	return editor
 }
-const uploaded = [{ name: 'clipboard-a.png', url: '/preview?fileId=1' }]
+const selection = { isCollapsed: true }
+globalThis.getSelection = () => selection
+const uploaded = [{ name: 'clipboard-a.png', image: true, url: '/preview?fileId=1' }]
 
 const descriptionEditor = fakeEditor({ handlesPaste: true, isContentEditable: true })
 document.activeElement = descriptionEditor
-assert.equal(app.insertIntoEditor(descriptionEditor, uploaded), true)
+assert.equal(app.insertIntoEditor(descriptionEditor, uploaded, false), true)
 assert.equal(
 	descriptionEditor.pasted['text/html'],
 	'<a href="/preview?fileId=1"><img src="/preview?fileId=1" alt="clipboard-a.png"></a>',
@@ -129,18 +137,27 @@ assert.deepEqual(typed, [])
 
 const commentField = fakeEditor({ handlesPaste: false, isContentEditable: true })
 document.activeElement = commentField
-assert.equal(app.insertIntoEditor(commentField, uploaded), true)
+assert.equal(app.insertIntoEditor(commentField, uploaded, false), true)
 assert.deepEqual(typed, [['insertText', '![clipboard-a.png](/preview?fileId=1)']])
 
 const titleInput = fakeEditor({ handlesPaste: false, isContentEditable: false })
 document.activeElement = titleInput
-assert.equal(app.insertIntoEditor(titleInput, uploaded), false)
+assert.equal(app.insertIntoEditor(titleInput, uploaded, false), false)
 assert.equal(typed.length, 1)
 
 const blurredEditor = fakeEditor({ handlesPaste: true, isContentEditable: true })
-assert.equal(app.insertIntoEditor(blurredEditor, uploaded), false)
+assert.equal(app.insertIntoEditor(blurredEditor, uploaded, false), false)
 assert.equal(blurredEditor.pasted, null)
-assert.equal(app.insertIntoEditor(null, uploaded), false)
+assert.equal(app.insertIntoEditor(null, uploaded, false), false)
+
+// Text selected while the upload ran must not be replaced; a selection made before the paste is.
+const reselectedEditor = fakeEditor({ handlesPaste: true, isContentEditable: true })
+document.activeElement = reselectedEditor
+selection.isCollapsed = false
+assert.equal(app.insertIntoEditor(reselectedEditor, uploaded, false), false)
+assert.equal(reselectedEditor.pasted, null)
+assert.equal(app.insertIntoEditor(reselectedEditor, uploaded, true), true)
+selection.isCollapsed = true
 
 let capturedRequest = null
 globalThis.fetch = async (url, options) => {
@@ -151,7 +168,7 @@ globalThis.fetch = async (url, options) => {
 	}
 }
 
-async function refreshAttachmentsReachesBothDeckStores() {
+async function refreshAttachmentsReachesEveryDeckStore() {
 	const calls = []
 	const warnings = []
 	const elements = {}
@@ -159,26 +176,24 @@ async function refreshAttachmentsReachesBothDeckStores() {
 	console.warn = (...args) => warnings.push(args)
 	document.getElementById = (id) => elements[id] || null
 
-	elements.content = {
-		__vue_app__: {
-			config: {
-				globalProperties: {
-					$pinia: {
-						_s: new Map([['attachment', {
-							fetchAttachments: async (cardId) => calls.push(['pinia', cardId]),
-						}]]),
-					},
-				},
-			},
-		},
+	const piniaWithAttachments = {
+		_s: new Map([['attachment', { fetchAttachments: async (cardId) => calls.push(['pinia', cardId]) }]]),
 	}
+	const vuex = { dispatch: async (action, cardId) => calls.push([action, cardId]) }
+
+	// Deck 1.19.1 and later: Vue 3 app with Pinia.
+	elements.content = { __vue_app__: { config: { globalProperties: { $pinia: piniaWithAttachments } } } }
 	assert.equal(await app.refreshAttachments(389), true)
 
+	// Deck 1.19.0: Vue 2 instance with Pinia.
 	delete elements.content
-	const vuex = { dispatch: async (action, cardId) => calls.push([action, cardId]) }
-	elements['content-vue'] = { __vue__: { $store: vuex } }
+	elements['content-vue'] = { __vue__: { $pinia: piniaWithAttachments, $store: {} } }
 	assert.equal(await app.refreshAttachments(389), true)
-	assert.deepEqual(calls, [['pinia', 389], ['fetchAttachments', 389]])
+
+	// Deck 1.18: Vuex holds the attachments, Pinia only unrelated stores.
+	elements['content-vue'] = { __vue__: { $pinia: { _s: new Map([['actions', {}]]) }, $store: vuex } }
+	assert.equal(await app.refreshAttachments(389), true)
+	assert.deepEqual(calls, [['pinia', 389], ['pinia', 389], ['fetchAttachments', 389]])
 	assert.equal(warnings.length, 0)
 
 	vuex.dispatch = () => undefined
@@ -193,7 +208,7 @@ async function refreshAttachmentsReachesBothDeckStores() {
 	console.warn = originalWarn
 }
 
-refreshAttachmentsReachesBothDeckStores()
+refreshAttachmentsReachesEveryDeckStore()
 	.then(() => app.uploadImage(new Blob(['image'], { type: 'image/png' }), 'clipboard-test.png', { boardId: 3, cardId: 389 }))
 	.then((result) => {
 		assert.deepEqual(result, { id: 7 })
