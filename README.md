@@ -1,12 +1,13 @@
 # Deck Clipboard Images
 
-Paste images from the clipboard directly into an open [Nextcloud Deck](https://github.com/nextcloud/deck) card. The image is uploaded as an ordinary Deck file attachment, so it can also be used as the card thumbnail.
+Paste images from the clipboard directly into an open [Nextcloud Deck](https://github.com/nextcloud/deck) card. The image is uploaded as an ordinary Deck file attachment, so it can also be used as the card thumbnail. An image pasted into the card description or the comment field is also inserted at the cursor.
 
 This is a small standalone Nextcloud app. It does not patch or replace Deck core files.
 
 ## Features
 
 - Paste one or several clipboard images with `Ctrl+V` or `Cmd+V` while a Deck card is open.
+- Inserts the image at the cursor when it is pasted into the card description or the comment field, without reloading the page.
 - Leaves normal text pasting unchanged when the clipboard contains no image.
 - Uses the signed-in user's existing Nextcloud session, CSRF token, and Deck permissions.
 - Gives each upload a unique millisecond-based filename.
@@ -40,11 +41,20 @@ The exact `occ` command and filesystem path vary between Docker, appliance, and 
 
 The app loads a small JavaScript listener only on authenticated Deck pages. When the current route identifies an open card and the clipboard contains image files, it uploads them through Deck's existing attachment endpoint. Authorization and file handling remain with Nextcloud and Deck.
 
-If a text editor is active, the app uploads the image but offers a manual reload button so unsaved text is not discarded. Otherwise it reloads the card automatically after a successful upload.
+When the image is pasted into the card description or the comment field, the app waits for the upload and then inserts a link to the attachment preview at the cursor:
+
+- The description editor (Nextcloud Text) receives a synthetic paste event carrying an HTML image link. It becomes a linked image in the description, and the editor saves it together with the text typed so far.
+- The comment field receives the Markdown image syntax as typed text. Deck renders it as an image once the comment is posted.
+
+The page is not reloaded in this case. The attachment list is refreshed in place through Deck's own store.
+
+In any other text field, or if the editor lost focus during the upload, the app uploads the image but offers a manual reload button so unsaved text is not discarded. Outside text fields it reloads the card automatically after a successful upload.
 
 ## Limitations
 
-- Images are stored as attachments, not inserted inline into the card description or a comment.
+- Inserted images use an absolute URL of the attachment preview, because the Text editor resolves a relative image source as a file path. The links stop working if the address of the Nextcloud instance changes.
+- On Nextcloud 34 (tested with Text 8.0.1) the Text editor does not display images in the Deck description and shows a loading placeholder instead. The same happens with images added through Deck's own "Add attachment" action. The image link is still saved and the attachment is listed. On Nextcloud 35 the image is displayed.
+- Deck has no public API for refreshing the attachment list, so the app calls Deck's internal store. If a Deck update changes that store, the list updates on the next page load instead.
 - Browser clipboard support varies. The app requires the browser to expose the copied image as a clipboard file.
 - Version `0.1.1` has only been verified on the versions listed above.
 - User-interface messages are currently in English only.
@@ -58,7 +68,7 @@ On Windows with Node.js and PowerShell available:
 .\scripts\Build-Package.ps1
 ```
 
-`Test-Package.ps1` checks the manifest, required files, JavaScript syntax, route handling, image selection, filename generation, upload URL, request token, and form data. If you have a local Nextcloud `app-info.xsd`, pass it explicitly with `-NextcloudSchema`.
+`Test-Package.ps1` checks the manifest, required files, JavaScript syntax, route handling, image selection, filename generation, upload URL, preview URL, editor insertion, request token, and form data. If you have a local Nextcloud `app-info.xsd`, pass it explicitly with `-NextcloudSchema`.
 
 ## Upstream context
 

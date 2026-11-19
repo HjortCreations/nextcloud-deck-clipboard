@@ -2,6 +2,17 @@
 
 All notable changes to this project are documented in this file.
 
+## [Unreleased]
+
+### Added
+
+- An image pasted into the card description or the comment field is inserted at the cursor after the upload.
+- The attachment list is refreshed without a page reload after the image is inserted.
+
+### Fixed
+
+- Pasting an image into the comment field no longer reloads the card and discards the unsent comment.
+
 ## [0.1.1] - 2026-09-25
 
 ### Changed
